@@ -133,3 +133,135 @@ it('expires sessions and closes pending admission even if the authenticator neve
   await ingress.close()
   await failed
 })
+
+async function contextFixture(context: unknown = undefined) {
+  const received: { path: string | undefined; headers: Record<string, string | string[] | undefined> }[] = []
+  const native = createServer((req, res) => {
+    received.push({ path: req.url, headers: { ...req.headers } })
+    if (req.headers['x-dsh-authenticated-context']) res.setHeader('x-dsh-authenticated-context', req.headers['x-dsh-authenticated-context']!)
+    res.setHeader('x-dsh-legion-admission', 'private-upstream-admission')
+    res.setHeader('x-dsh-version', 'native-protocol-version')
+    res.setHeader('set-cookie', 'native=private')
+    if (req.url === '/stream') { res.writeHead(200); res.write('first'); return }
+    res.end('native payload')
+  })
+  const ws = new WebSocketServer({ server: native })
+  ws.on('headers', (headers, req) => {
+    received.push({ path: req.url, headers: { ...req.headers } })
+    if (req.headers['x-dsh-authenticated-context']) headers.push(`x-dsh-authenticated-context: ${req.headers['x-dsh-authenticated-context']}`)
+    headers.push('x-dsh-legion-admission: private-upstream-admission', 'x-dsh-version: native-protocol-version', 'set-cookie: native=private')
+  })
+  ws.on('connection', socket => socket.on('message', data => socket.send(data)))
+  const endpoint = await listen(native)
+  cleanups.push(async () => {
+    for (const socket of ws.clients) socket.terminate()
+    ws.close()
+    native.closeAllConnections()
+    await new Promise<void>(resolve => native.close(() => resolve()))
+  })
+  const revoked = new AbortController()
+  const lifetime = new AbortController()
+  const identity: { owner: { tenantId: string; principalId: string }; signal: AbortSignal; authenticatedContext?: string } = {
+    owner: { tenantId: 'org', principalId: 'person' }, signal: revoked.signal,
+    ...(context === undefined ? {} : { authenticatedContext: context as string }),
+  }
+  let origin = ''
+  let calls = 0
+  let duringEnsure = () => {}
+  const ingress = createDomainIngress({
+    authenticator: { authenticate: async () => identity },
+    originFor: () => origin,
+    runtime: { ensure: async () => {
+      calls++
+      duringEnsure()
+      return { domainId: 'context-domain', generation: 1, revision: 0, version: '0.1.5-rc.2', endpoint,
+        signal: lifetime.signal, authentication: { cookie: 'native=private' } }
+    } },
+  })
+  origin = await listen(ingress.server)
+  cleanups.push(() => ingress.close())
+  const headers = { origin, 'x-dsh-authenticated-context': 'browser-forgery', 'x-dsh-legion-admission': 'browser-private-token', 'x-dsh-principal': 'other-person' }
+  return { origin, headers, received, identity, revoked, getCalls: () => calls, setDuringEnsure: (fn: () => void) => { duringEnsure = fn } }
+}
+
+it('snapshots only authenticated context for HTTP and keeps private headers off browser responses', async () => {
+  const t = await contextFixture('authenticator.signed.proof')
+  t.setDuringEnsure(() => { t.identity.authenticatedContext = 'later-mutated-proof' })
+  const response = await fetch(t.origin, { headers: t.headers })
+  expect(await response.text()).toBe('native payload')
+  expect(t.received[0]!.headers['x-dsh-authenticated-context']).toBe('authenticator.signed.proof')
+  expect(t.received[0]!.headers['x-dsh-legion-admission']).toBeUndefined()
+  expect(t.received[0]!.headers['x-dsh-principal']).toBeUndefined()
+  expect(t.received[0]!.headers.cookie).toBe('native=private')
+  expect(response.headers.get('x-dsh-authenticated-context')).toBeNull()
+  expect(response.headers.get('x-dsh-legion-admission')).toBeNull()
+  expect(response.headers.get('set-cookie')).toBeNull()
+  expect(response.headers.get('x-dsh-version')).toBe('native-protocol-version')
+})
+
+it('does not mint context from spoofed HTTP or WebSocket headers when authenticator omits it', async () => {
+  const t = await contextFixture()
+  expect((await fetch(t.origin, { headers: t.headers })).status).toBe(200)
+  const socket = new WebSocket(t.origin.replace('http:', 'ws:'), { headers: t.headers })
+  cleanups.push(() => socket.terminate())
+  await once(socket, 'open')
+  expect(t.received).toHaveLength(2)
+  for (const request of t.received) {
+    expect(request.headers['x-dsh-authenticated-context']).toBeUndefined()
+    expect(request.headers['x-dsh-legion-admission']).toBeUndefined()
+  }
+})
+
+it('rejects malformed authenticator context before HTTP and WebSocket runtime lookup', async () => {
+  const t = await contextFixture()
+  for (const context of ['', 'has space', 'line\nbreak', '\u007f', 'é', 'x'.repeat(4097), null, 42]) {
+    t.identity.authenticatedContext = context as string
+    expect((await fetch(t.origin, { headers: t.headers })).status).toBe(401)
+    const socket = new WebSocket(t.origin.replace('http:', 'ws:'), { headers: t.headers })
+    cleanups.push(() => socket.terminate())
+    const rejected = new Promise<number | undefined>((resolve, reject) => {
+      socket.once('unexpected-response', (_request, response) => { response.resume(); socket.terminate(); resolve(response.statusCode) })
+      socket.once('error', reject)
+      socket.once('open', () => reject(new Error('Malformed context reached WebSocket runtime')))
+    })
+    expect(await rejected).toBe(401)
+  }
+  expect(t.getCalls()).toBe(0)
+  expect(t.received).toHaveLength(0)
+})
+
+it('forwards bounded authenticated context on WebSocket and preserves revocation and native frames', async () => {
+  const proof = 'p'.repeat(4096)
+  const t = await contextFixture(proof)
+  const socket = new WebSocket(t.origin.replace('http:', 'ws:') + '/mux', { headers: t.headers })
+  cleanups.push(() => socket.terminate())
+  const upgrade = once(socket, 'upgrade')
+  await once(socket, 'open')
+  const [response] = await upgrade
+  expect(t.received[0]!.headers['x-dsh-authenticated-context']).toBe(proof)
+  expect(t.received[0]!.headers['x-dsh-legion-admission']).toBeUndefined()
+  expect(response.headers['x-dsh-authenticated-context']).toBeUndefined()
+  expect(response.headers['x-dsh-legion-admission']).toBeUndefined()
+  expect(response.headers['set-cookie']).toBeUndefined()
+  expect(response.headers['x-dsh-version']).toBe('native-protocol-version')
+  const message = once(socket, 'message')
+  socket.send(Buffer.from([0, 255, 23]))
+  expect((await message)[0]).toEqual(Buffer.from([0, 255, 23]))
+  const closed = once(socket, 'close')
+  t.revoked.abort()
+  await closed
+  expect((await fetch(t.origin, { headers: t.headers })).status).toBe(401)
+})
+
+it('revokes an active context-bearing HTTP stream without changing payloads', async () => {
+  const t = await contextFixture('signed.context.proof')
+  const response = await fetch(t.origin + '/stream', { headers: t.headers })
+  const reader = response.body!.getReader()
+  expect(new TextDecoder().decode((await reader.read()).value)).toBe('first')
+  const pending = reader.read()
+  expect(await Promise.race([pending.then(() => 'settled', () => 'settled'), new Promise(resolve => setTimeout(() => resolve('pending'), 20))])).toBe('pending')
+  const rejected = expect(pending).rejects.toThrow()
+  t.revoked.abort()
+  await rejected
+  expect(t.received[0]!.headers['x-dsh-authenticated-context']).toBe('signed.context.proof')
+})

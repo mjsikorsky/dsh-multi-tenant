@@ -88,3 +88,7 @@ node packages/multi-tenant/dist/cli.mjs start --image sha256:<returned-id> --dat
 ```
 
 Use a fresh private data directory for an unrelated test. `pnpm release:check` verifies the package without publishing. Root AGENTS.md maps changes to the appropriate native tests. Report the exact commit, checks actually run, and limitations; a process-ready message alone is not proof the native workbench works.
+
+## LEGION owned-source acceptance
+
+The `mjsikorsky/dsh-multi-tenant` fork runs `.github/workflows/legion-quality.yml` on main and manual dispatch. It records the exact source/runtime, installs the frozen dependency graph, typechecks/builds, runs focused ingress regressions, and verifies an independently installed local tarball. A LEGION dependency pin requires a green receipt for that exact source. This workflow does not publish npm, build a runtime image, or replace the separate native LEGION joined proof and full release checks.

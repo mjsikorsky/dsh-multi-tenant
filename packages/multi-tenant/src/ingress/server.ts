@@ -3,7 +3,7 @@ import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:
 import type { Duplex } from 'node:stream'
 import type { DomainOwner } from '../domain/repository.ts'
 import type { RuntimeAdmission } from '../runtime/provider.ts'
-import type { DomainAuthenticator } from './authentication.ts'
+import { AUTHENTICATED_CONTEXT_HEADER, type DomainAuthenticator } from './authentication.ts'
 
 export interface DomainIngressOptions {
   readonly authenticator: DomainAuthenticator
@@ -57,6 +57,11 @@ export function createDomainIngress(options: DomainIngressOptions) {
       || ((websocket || !['GET', 'HEAD'].includes(request.method ?? '')) && request.headers.origin !== external.origin)) {
       throw new Rejection(403)
     }
+    // Snapshot trusted authentication output before awaiting runtime admission. Never derive it
+    // from browser headers or re-read a mutable authenticator result after ensure().
+    const authenticatedContext = identity.authenticatedContext
+    if (authenticatedContext !== undefined && (typeof authenticatedContext !== 'string'
+      || !/^[\x21-\x7e]{1,4096}$/.test(authenticatedContext))) throw new Rejection(401)
     const admission = await until(options.runtime.ensure(identity.owner), AbortSignal.any([abort.signal, identity.signal]))
     const signal = AbortSignal.any([abort.signal, identity.signal, admission.signal])
     signal.throwIfAborted()
@@ -70,6 +75,7 @@ export function createDomainIngress(options: DomainIngressOptions) {
     forwarded.host = internal.host
     forwarded.origin = internal.origin
     forwarded.cookie = cookie
+    if (authenticatedContext !== undefined) forwarded[AUTHENTICATED_CONTEXT_HEADER] = authenticatedContext
     if (websocket) { forwarded.connection = 'Upgrade'; forwarded.upgrade = 'websocket' }
     return { internal, forwarded, signal, socketPath: admission.socketPath }
   }
@@ -99,6 +105,8 @@ export function createDomainIngress(options: DomainIngressOptions) {
       upstream.once('response', received => {
         const outgoing = headers(received.headers)
         delete outgoing['set-cookie']
+        delete outgoing[AUTHENTICATED_CONTEXT_HEADER]
+        delete outgoing['x-dsh-legion-admission']
         outgoing['cache-control'] = 'no-store'
         // Add an intersecting policy; never discard native script/style policies.
         const csp = outgoing['content-security-policy']
@@ -140,6 +148,8 @@ export function createDomainIngress(options: DomainIngressOptions) {
       upstream.once('upgrade', (response, target, upstreamHead) => {
         const outgoing = headers(response.headers)
         delete outgoing['set-cookie']
+        delete outgoing[AUTHENTICATED_CONTEXT_HEADER]
+        delete outgoing['x-dsh-legion-admission']
         outgoing.connection = 'Upgrade'
         outgoing.upgrade = 'websocket'
         const lines = Object.entries(outgoing).flatMap(([key, value]) => (Array.isArray(value) ? value : [value]).map(item => `${key}: ${String(item)}`))

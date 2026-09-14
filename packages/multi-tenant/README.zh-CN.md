@@ -196,3 +196,5 @@ Docker provider 启动 `/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js --prof
 `pnpm release:check` 验证 exports、声明、生命周期、入口、持久化和独立 tarball 消费者。运行 `pnpm --dir scripts/native-host-probe install --frozen-lockfile` 后执行 `pnpm probe:isolated`，通过安装后的包验证真实原生 Host 和 Playwright；先安装 Chromium 或设置 `PROBE_CHROMIUM`。探针构建固定测试镜像，只使用假凭据、无外部调用模型和本地 MCP，结束时清理运行时。
 
 针对精确 rc.2 验证根/子代理组合、冷恢复、原始传输、浏览器重连、域凭据、撤销与容器恢复。历史根级 publication 反例保留为边界回归：同 Principal 的历史仍可读取，符合新契约。验证通过不等于通用安全认证，也不表示支持共享 Host 内的多用户授权。
+
+认证器可以在所有者和撤销信号之外返回 `authenticatedContext`。它是由可信认证逻辑签发、需要独立验证的不透明凭据，长度限于 1–4096 个可见 ASCII 字符。入口在来源校验之后、运行时查询之前仅捕获一次，并仅通过保留的 `x-dsh-authenticated-context` 请求头传给原生 HTTP/WebSocket。浏览器提供的同名头不受信任。省略该值保留现有行为；格式无效时在运行时查询前拒绝。原生策略必须验证签名、人员/组织/工作区范围和有效期；入口不解析授权或建立 ACL。不要将原始平台准入令牌或运行时 Cookie 作为上下文。响应中的保留上下文及平台准入头会被移除，其他原生协议头保持不变。原生处理程序不得在响应正文或消息中泄露私有上下文；入口不会改写这些原生载荷。

@@ -9,6 +9,6 @@ export { LocalProcessRuntimeProvider } from './runtime/providers/local-process.t
 export type { LocalRuntimeCommand } from './runtime/providers/local-process.ts'
 export { createDomainIngress } from './ingress/server.ts'
 export type { DomainIngressOptions } from './ingress/server.ts'
-export { MemoryDomainSessions } from './ingress/authentication.ts'
+export { MemoryDomainSessions, AUTHENTICATED_CONTEXT_HEADER } from './ingress/authentication.ts'
 export type { DomainAuthenticator, AuthenticatedSession } from './ingress/authentication.ts'
 export const DSH_RUNTIME_VERSION = '0.1.5-rc.2'

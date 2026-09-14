@@ -19,7 +19,7 @@ pnpm install --frozen-lockfile
 pnpm release:check
 ```
 
-`release:check` performs metadata/contract checks, typechecking, tests, build, SQLite proof and an independently installed tarball SDK smoke; it does not publish. For narrow edits, run relevant checks first. Before a release PR, run the complete release check. Record local validation and the tested Node version in the PR; GitHub does not repeat quality tests.
+`release:check` performs metadata/contract checks, typechecking, tests, build, SQLite proof and an independently installed tarball SDK smoke; it does not publish. For narrow edits, run relevant checks first. Before a release PR, run the complete release check. Record local validation and the tested Node version in the PR. The LEGION-owned fork also runs its focused `legion-quality.yml` gate on main; exact-source acceptance is required before a LEGION dependency pin. The complete release checks remain separate.
 
 Runtime, CLI, ingress or public API changes also require the relevant installed/native proof, on a machine with local Docker and Chromium:
 

@@ -2,9 +2,17 @@ import { randomBytes, createHash } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 import type { DomainOwner } from '../domain/repository.ts'
 
+/** Reserved private ingress-to-runtime header; never accept its browser-supplied value. */
+export const AUTHENTICATED_CONTEXT_HEADER = 'x-dsh-authenticated-context'
+
 export interface AuthenticatedSession {
   readonly owner: DomainOwner
   readonly signal: AbortSignal
+  /** Authenticator-issued opaque proof, 1–4096 visible ASCII characters. The native policy
+   * must independently verify signature, actor/resource scope and lifetime before using it.
+   * This is not the incoming platform admission token or native runtime cookie.
+   */
+  readonly authenticatedContext?: string
 }
 
 /** A deployment implements this after authenticating its own user/session protocol. */

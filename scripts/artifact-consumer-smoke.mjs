@@ -10,7 +10,10 @@ try {
   execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', 'typescript@6.0.3', '@types/node@22.20.0'], { cwd: installed.directory, stdio: 'pipe' })
   writeFileSync(join(installed.directory, 'contract.ts'), `
     import { DomainRuntimeCoordinator, SQLiteDomainRepository, createDomainIngress,
-      DSH_RUNTIME_VERSION, type DomainAuthenticator, type RuntimeProvider } from 'dsh-multi-tenant'
+      DSH_RUNTIME_VERSION, AUTHENTICATED_CONTEXT_HEADER, type AuthenticatedSession, type DomainAuthenticator, type RuntimeProvider } from 'dsh-multi-tenant'
+    const contextHeader: 'x-dsh-authenticated-context' = AUTHENTICATED_CONTEXT_HEADER
+    const context: AuthenticatedSession = { owner: { tenantId: 'tenant', principalId: 'person' }, signal: new AbortController().signal, authenticatedContext: 'signed-proof' }
+    void contextHeader; void context
     declare const authentication: DomainAuthenticator
     declare const provider: RuntimeProvider
     const repository = new SQLiteDomainRepository('/platform/directory')

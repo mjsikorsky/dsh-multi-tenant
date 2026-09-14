@@ -1,0 +1,44 @@
+name: LEGION owned-source quality
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: legion-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authenticated-ingress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
+        with:
+          install: false
+      - name: Record source and runtime
+        run: |
+          git rev-parse HEAD
+          node --version
+          pnpm --version
+      - name: Frozen dependency installation
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck public SDK
+        run: pnpm --filter dsh-multi-tenant typecheck
+      - name: Build public SDK and CLI
+        run: pnpm --filter dsh-multi-tenant build
+      - name: Focused authenticated ingress regressions
+        run: pnpm --filter dsh-multi-tenant exec vitest run --config vitest.config.ts tests/ingress/server.test.ts --maxWorkers=1
+      - name: Independently installed artifact and declaration smoke
+        run: node scripts/artifact-consumer-smoke.mjs --local
