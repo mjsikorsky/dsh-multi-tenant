@@ -48,11 +48,11 @@ If Docker is unavailable, report the failed check and help start the local daemo
 
 ## Architecture and code map
 
-This is a CLI plus platform SDK that manages independent native DeepSeek Harness Hosts. The isolation key is `(tenantId, principalId)`. It is not the pre-0.7 shared-host Cordis plugin. A small native runtime-control plugin runs inside each DSH Host to report readiness; it is not the platform.
+This is a CLI plus platform SDK that manages independent native DeepSeek Harness Hosts. The native domain selector is explicit: personal `(tenantId, principalId)` or shared workspace `(tenantId, workspaceId)`. The authenticated actor remains separate from workspace ownership. It is not the pre-0.7 shared-host Cordis plugin. A small native runtime-control plugin runs inside each DSH Host to report readiness; it is not the platform.
 
 ```text
-trusted identity -> domain repository -> runtime coordinator -> one native DSH Host per Principal
-browser -> authenticated HTTP/WebSocket ingress -> that Principal's native Web
+trusted identity -> domain repository -> runtime coordinator -> one native DSH Host per tagged domain scope
+browser -> authenticated HTTP/WebSocket ingress -> that selected domain's native Web
 local CLI -> demo identities + Docker named volumes + authenticated loopback relay
 ```
 
@@ -68,7 +68,7 @@ Repository paths:
 - `scripts/dsh-target.mjs`: exact DSH version and source commit; no unreviewed floating upstream upgrades.
 - `packages/multi-tenant/tests/`, `scripts/tests/`, `scripts/experience-smoke.mjs`, `scripts/native-host-probe/`: package contracts, release checks and installed/native evidence.
 
-DSH owns sessions, workspaces, tools, presets, subagents and their persistence. There is no independent per-session/root read ACL within one Principal. Keep platform authentication, management APIs, control storage and the Docker socket outside user domains. Production login/SSO, TLS, quotas and deployment policy belong to the embedding platform; Alice/Bob is only a local demo.
+DSH owns sessions, workspaces, tools, presets, subagents and their persistence. Guo does not own per-session/root ACLs. A shared workspace Host requires native resource policy for its actors; that API policy is not filesystem privacy against hostile code running in the Host. Run untrusted model code in a separately confined execution guest. Keep platform authentication, management APIs, control storage and the Docker socket outside user domains. Production login/SSO, TLS, quotas and deployment policy belong to the embedding platform; Alice/Bob is only a local demo.
 
 ## Work from source
 

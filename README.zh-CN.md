@@ -200,3 +200,13 @@ Docker provider 启动 `/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js --prof
 认证器可以在所有者和撤销信号之外返回 `authenticatedContext`。它是由可信认证逻辑签发、需要独立验证的不透明凭据，长度限于 1–4096 个可见 ASCII 字符。入口在来源校验之后、运行时查询之前仅捕获一次，并仅通过保留的 `x-dsh-authenticated-context` 请求头传给原生 HTTP/WebSocket。浏览器提供的同名头不受信任。省略该值保留现有行为；格式无效时在运行时查询前拒绝。原生策略必须验证签名、人员/组织/工作区范围和有效期；入口不解析授权或建立 ACL。不要将原始平台准入令牌或运行时 Cookie 作为上下文。响应中的保留上下文及平台准入头会被移除，其他原生协议头保持不变。原生处理程序不得在响应正文或消息中泄露私有上下文；入口不会改写这些原生载荷。
 
 公开的 Linux SDK 辅助函数 `openPrivateSocket(path)` 使用 `O_PATH | O_NOFOLLOW` 固定已有 Unix 套接字，返回 `{ file, path }`。通过返回的 `/proc/self/fd/<fd>` 路径连接，并保留 `file` 直到所有使用该描述符的操作结束；每个失败和关闭路径都必须关闭它。父目录必须是工作负载无法替换的平台所有挂载点。此函数不授予身份、工作区或执行权限：部署策略必须选择路径并单独认证每项控制操作。它不是浏览器 API，也不是可移植的 macOS/Windows 传输。
+
+## 显式工作区运行域
+
+原生 SDK 支持 `DomainScope`：`{ kind: 'personal', tenantId, principalId }` 或 `{ kind: 'workspace', tenantId, workspaceId }`。既有未标记的 `{ tenantId, principalId }` 仍选择个人运行域。工作区范围让已授权的协作者访问同一个原生 Host、存储和运行代次，不会把工作区 ID 冒充为用户身份。`AuthenticatedSession.owner` 始终是真实用户；可选 `scope` 由可信认证器在校验当前成员资格后选择。入口固定这两个值，验证租户及个人身份绑定，再把同一范围传给 `originFor(owner, scope)` 和原生协调器。会话权限仍由原生 Host 及其策略所有者管理。
+
+SQLite 目录以事务将个人 v1 记录迁移到带类型的 v2 记录，保留全部 UUID、策略修订、运行代次及未完成清理标记。迁移冲突或未来版本会被拒绝。只读 v1 视图阻止旧协调器另建可写目录；已打开的 v2 目录不可直接降级。共享工作区记录提供 `scope`，不伪造个人 `owner`。Linux 提供器把每个运行域 UUID 的独立工作目录挂载到 `/workspace`，与私有 `/domain` 状态及 `/control` 传输分离。
+
+共享 Host 是代码信任域。会话 API 权限不能阻止任意 Host 代码读取该 Host 的文件。不可信模型代码必须在仅挂载已授权工作区数据的独立执行环境中运行；本范围 API 和固定挂载并未实现该执行环境。源码测试分别验证选择、迁移与传输，不替代 Docker 或镜像验证。
+
+`DomainRuntimeCoordinator.current(domainId, generation)` 只返回已就绪且仍由协调器持有的准入，不会分配、启动或恢复运行时；等待后再次校验策略版本、目标状态和代次。可信认证器提供的 `AuthenticatedSession.runtimeGeneration` 将 HTTP 和 WebSocket 转发限定到该代次。

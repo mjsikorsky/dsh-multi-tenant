@@ -1,15 +1,15 @@
 import { request as httpRequest, createServer } from 'node:http'
 import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
-import type { DomainOwner } from '../domain/repository.ts'
+import { normalizeDomainScope, type DomainOwner, type DomainScope } from '../domain/repository.ts'
 import type { RuntimeAdmission } from '../runtime/provider.ts'
 import { AUTHENTICATED_CONTEXT_HEADER, type DomainAuthenticator } from './authentication.ts'
 
 export interface DomainIngressOptions {
   readonly authenticator: DomainAuthenticator
-  readonly runtime: { ensure(owner: DomainOwner): Promise<RuntimeAdmission> }
+  readonly runtime: { ensure(scope: DomainOwner | DomainScope): Promise<RuntimeAdmission> }
   /** Trusted mapping; a domain's origin cannot be chosen by request headers. */
-  readonly originFor: (owner: DomainOwner) => string
+  readonly originFor: (owner: DomainOwner, scope: DomainScope) => string
   readonly maxConnections?: number
 }
 
@@ -48,7 +48,16 @@ export function createDomainIngress(options: DomainIngressOptions) {
     const authSignal = AbortSignal.any([abort.signal, AbortSignal.timeout(5_000)])
     const identity = await until(options.authenticator.authenticate(request, authSignal), authSignal)
     if (!identity || identity.signal.aborted) throw new Rejection(401)
-    const external = new URL(options.originFor(identity.owner))
+    // Actor and placement are independent trusted facts. Snapshot both before
+    // invoking another owner; a mutable authenticator cannot switch the runtime.
+    const actor = normalizeDomainScope(identity.owner)
+    if (actor.kind !== 'personal') throw new Rejection(401)
+    const owner = Object.freeze({ tenantId: actor.tenantId, principalId: actor.principalId })
+    const scope = normalizeDomainScope(identity.scope ?? owner)
+    if (scope.tenantId !== owner.tenantId || scope.kind === 'personal' && scope.principalId !== owner.principalId) {
+      throw new Rejection(403)
+    }
+    const external = new URL(options.originFor(owner, scope))
     if (!['http:', 'https:'].includes(external.protocol) || external.username || external.password || external.pathname !== '/' || external.search || external.hash) {
       throw new Error('Invalid configured domain origin')
     }
@@ -59,10 +68,13 @@ export function createDomainIngress(options: DomainIngressOptions) {
     }
     // Snapshot trusted authentication output before awaiting runtime admission. Never derive it
     // from browser headers or re-read a mutable authenticator result after ensure().
+    const runtimeGeneration = identity.runtimeGeneration
+    if (runtimeGeneration !== undefined && (!Number.isSafeInteger(runtimeGeneration) || runtimeGeneration < 1)) throw new Rejection(401)
     const authenticatedContext = identity.authenticatedContext
     if (authenticatedContext !== undefined && (typeof authenticatedContext !== 'string'
       || !/^[\x21-\x7e]{1,4096}$/.test(authenticatedContext))) throw new Rejection(401)
-    const admission = await until(options.runtime.ensure(identity.owner), AbortSignal.any([abort.signal, identity.signal]))
+    const admission = await until(options.runtime.ensure(scope), AbortSignal.any([abort.signal, identity.signal]))
+    if (runtimeGeneration !== undefined && admission.generation !== runtimeGeneration) throw new Rejection(403)
     const signal = AbortSignal.any([abort.signal, identity.signal, admission.signal])
     signal.throwIfAborted()
     const cookie = admission.authentication?.cookie

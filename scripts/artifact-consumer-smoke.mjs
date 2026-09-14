@@ -10,7 +10,7 @@ try {
   execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-dev', 'typescript@6.0.3', '@types/node@22.20.0'], { cwd: installed.directory, stdio: 'pipe' })
   writeFileSync(join(installed.directory, 'contract.ts'), `
     import { DomainRuntimeCoordinator, SQLiteDomainRepository, createDomainIngress,
-      DSH_RUNTIME_VERSION, AUTHENTICATED_CONTEXT_HEADER, openPrivateSocket, type AuthenticatedSession, type DomainAuthenticator, type RuntimeProvider } from 'dsh-multi-tenant'
+      DSH_RUNTIME_VERSION, AUTHENTICATED_CONTEXT_HEADER, openPrivateSocket, type DomainScope, type AuthenticatedSession, type DomainAuthenticator, type RuntimeProvider } from 'dsh-multi-tenant'
     const contextHeader: 'x-dsh-authenticated-context' = AUTHENTICATED_CONTEXT_HEADER
     const context: AuthenticatedSession = { owner: { tenantId: 'tenant', principalId: 'person' }, signal: new AbortController().signal, authenticatedContext: 'signed-proof' }
     void contextHeader; void context
@@ -21,7 +21,17 @@ try {
     declare const authentication: DomainAuthenticator
     declare const provider: RuntimeProvider
     const repository = new SQLiteDomainRepository('/platform/directory')
+    const workspace: DomainScope = { kind: 'workspace', tenantId: 'tenant', workspaceId: 'room' }
+    const shared = repository.resolve(workspace)
+    const selected: DomainScope = shared.scope
+    const personal = repository.resolve({ tenantId: 'tenant', principalId: 'person' })
+    const actor: string = personal.owner.principalId
+    void selected; void actor
+    const collaborator: AuthenticatedSession = { ...context, scope: workspace }
+    void collaborator
     const runtime = new DomainRuntimeCoordinator(repository, provider, DSH_RUNTIME_VERSION)
+    void runtime.ensure(workspace)
+    void runtime.current(shared.id, shared.generation)
     createDomainIngress({ authenticator: authentication, runtime, originFor: () => 'https://alice.example' })
     // @ts-expect-error No per-root authorization facade remains.
     runtime.revokeRoot('session')

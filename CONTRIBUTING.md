@@ -2,23 +2,23 @@
 
 # Contributing
 
-This project integrates Principal-isolated native DSH Hosts into multi-user platforms. Keep the platform small: authentication, domain ownership, runtime lifecycle and ingress belong here; sessions, workspaces, presets, tools, persistence and Web behavior belong to native DSH.
+This project integrates explicit personal/workspace native DSH Hosts into multi-user platforms. Keep the platform small: authentication, domain ownership, runtime lifecycle and ingress belong here; sessions, workspaces, presets, tools, persistence and Web behavior belong to native DSH.
 
 The authority path is:
 
 ```text
 trusted application login
-  -> (tenantId, principalId)
+  -> personal (tenantId, principalId) OR workspace (tenantId, workspaceId), with actor retained separately
   -> persistent domain directory and cancellable admission
   -> independently owned runtime generation
   -> native DSH Host, data and capabilities
 ```
 
-There is no independent root/session read ACL inside a Principal. Native permissions remain native behavior; platform management and credentials must stay outside every domain. Extend through `DomainAuthenticator`, `DomainRepository` and `RuntimeProvider`; do not rebind private scopes, copy controllers or reconstruct a parallel Agent lifecycle.
+Guo does not supply root/session ACLs. Shared workspace actor policy belongs to native resource owners; hostile model execution needs a separate execution compartment. Native permissions remain native behavior; platform management and credentials must stay outside every domain. Extend through `DomainAuthenticator`, `DomainRepository` and `RuntimeProvider`; do not rebind private scopes, copy controllers or reconstruct a parallel Agent lifecycle.
 
 Before merging a material change:
 
-- verify the complete tenant/principal tuple and trusted origin before admission;
+- verify the complete tagged domain scope, real authenticated actor and trusted origin before admission;
 - invalidate existing connections on revocation and retain ownership when cleanup cannot be proven;
 - include executable lifecycle, concurrency, hostile-input and failure evidence;
 - run release checks locally and record the Node version and any untested supported platforms;

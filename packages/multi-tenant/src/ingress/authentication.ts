@@ -1,12 +1,17 @@
 import { randomBytes, createHash } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
-import type { DomainOwner } from '../domain/repository.ts'
+import type { DomainOwner, DomainScope } from '../domain/repository.ts'
 
 /** Reserved private ingress-to-runtime header; never accept its browser-supplied value. */
 export const AUTHENTICATED_CONTEXT_HEADER = 'x-dsh-authenticated-context'
 
 export interface AuthenticatedSession {
   readonly owner: DomainOwner
+  /** Deployment-authorized runtime scope. Omission retains the personal domain.
+   * A workspace scope requires current membership; it never changes the actor. */
+  readonly scope?: DomainScope
+  /** Optional authenticated generation fence; admission rejects a restarted runtime. */
+  readonly runtimeGeneration?: number
   readonly signal: AbortSignal
   /** Authenticator-issued opaque proof, 1–4096 visible ASCII characters. The native policy
    * must independently verify signature, actor/resource scope and lifetime before using it.

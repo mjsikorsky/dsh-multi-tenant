@@ -7,8 +7,8 @@ Read [the AI project guide](packages/multi-tenant/AI.md) for task routing and ar
 - Inspect `git status`, branch and remote before editing; compare with the requested upstream revision. Preserve unrelated local changes.
 - The publishable package is `packages/multi-tenant`; the repository root is a private pnpm workspace.
 - Version/exports/engine: package `package.json`. Package manager: root `package.json`. DSH baseline: `scripts/dsh-target.mjs`. Read these sources instead of guessing versions.
-- Use the current Principal-isolated Host architecture. DSH owns native sessions/tools/Web; this package owns trusted identity, domains, lifecycle and ingress. Keep platform secrets and control storage outside domains.
-- No separate per-root ACL, shared-host user isolation, or custom Agent lifecycle. The CLI provider is internal; the Linux SDK provider has a different transport contract.
+- Use the current tagged personal/workspace native Host architecture. Keep the authenticated actor separate from workspace placement. DSH owns native sessions/tools/Web; this package owns trusted identity, domains, lifecycle and ingress. Keep platform secrets and control storage outside domains.
+- No separate per-root ACL or custom Agent lifecycle. Guo owns physical domain placement; native resource owners govern shared workspace actors. Shared Host API ACLs do not isolate hostile model code. The CLI provider is internal; the Linux SDK provider has a different transport contract.
 
 ## Setup and checks
 

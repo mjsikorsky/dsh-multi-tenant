@@ -1,6 +1,6 @@
 /** Trusted platform APIs. Never expose the repository/coordinator to a native Host. */
 export { SQLiteDomainRepository } from './domain/sqlite.ts'
-export type { DomainOwner, DomainRecord, DomainRepository, DomainState, DomainDesiredState } from './domain/repository.ts'
+export type { DomainOwner, DomainScope, PersonalDomainRecord, WorkspaceDomainRecord, DomainRecord, DomainRepository, DomainState, DomainDesiredState } from './domain/repository.ts'
 export { DomainRuntimeCoordinator } from './runtime/coordinator.ts'
 export type { RuntimeProvider, RuntimeHandle, RuntimeReady, RuntimeSpec, RuntimeAdmission } from './runtime/provider.ts'
 export { DockerRuntimeProvider } from './runtime/providers/docker.ts'

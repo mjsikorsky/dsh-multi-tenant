@@ -1,4 +1,4 @@
-import type { DomainDesiredState, DomainOwner, DomainRecord, DomainRepository } from '../domain/repository.ts'
+import type { DomainDesiredState, DomainOwner, DomainScope, DomainRecord, DomainRepository } from '../domain/repository.ts'
 import type { RuntimeAdmission, RuntimeHandle, RuntimeProvider } from './provider.ts'
 
 interface Entry {
@@ -41,7 +41,7 @@ export class DomainRuntimeCoordinator {
     }
   }
 
-  async ensure(owner: DomainOwner): Promise<RuntimeAdmission> {
+  async ensure(owner: DomainOwner | DomainScope): Promise<RuntimeAdmission> {
     if (this.closing) throw new Error('Coordinator is closing')
     const current = this.repository.resolve(owner)
     if (this.recoveries.has(current.id)) throw new Error('Domain runtime is recovering')
@@ -56,6 +56,24 @@ export class DomainRuntimeCoordinator {
     this.entries.set(record.id, entry)
     entry.task = Promise.resolve().then(() => this.start(entry))
     return entry.task
+  }
+
+  /** Read an already-ready owned generation. Never allocate, start or recover a runtime. */
+  async current(id: string, generation: number): Promise<RuntimeAdmission | undefined> {
+    if (this.closing || !Number.isSafeInteger(generation) || generation < 1) return
+    const entry = this.entries.get(id)
+    if (!entry || entry.record.generation !== generation) return
+    const valid = () => {
+      if (this.closing || this.entries.get(id) !== entry || entry.abort.signal.aborted || this.recoveries.has(id)) return false
+      const record = this.repository.get(id)
+      return record.state === 'ready' && record.desired === 'enabled'
+        && record.generation === generation && record.revision === entry.record.revision
+    }
+    try {
+      if (!valid()) return
+      const admission = await entry.task
+      return valid() && !admission.signal.aborted ? admission : undefined
+    } catch { return }
   }
 
   private async start(entry: Entry): Promise<RuntimeAdmission> {

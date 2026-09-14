@@ -54,11 +54,11 @@ export class DockerRuntimeProvider implements RuntimeProvider {
     await mkdir(resolve(this.options.directory), { recursive: true, mode: 0o700 })
     const root = await realpath(this.options.directory)
     // Linux sockaddr_un reserves one of its 108 bytes for the terminator.
-    if (Buffer.byteLength(join(root, 'control', spec.domainId, 'http.sock')) > 107) {
+    if (Buffer.byteLength(join(root, 'control', spec.domainId, 'workspace.sock')) > 107) {
       throw new Error('Runtime directory is too long for a Linux Unix socket; use a shorter platform directory')
     }
     const owner = createHash('sha256').update(root).digest('hex').slice(0, 16)
-    return { root, owner, name: `dsh-domain-${owner}-${spec.domainId}`, control: join(root, 'control', spec.domainId), data: join(root, 'data', spec.domainId) }
+    return { root, owner, name: `dsh-domain-${owner}-${spec.domainId}`, control: join(root, 'control', spec.domainId), data: join(root, 'data', spec.domainId), workspace: join(root, 'workspaces', spec.domainId) }
   }
 
   private async existing(name: string): Promise<{ Id: string; Config: { Labels: Record<string, string> } } | undefined> {
@@ -108,7 +108,7 @@ export class DockerRuntimeProvider implements RuntimeProvider {
       location = await this.location(spec)
       // No earlier generation is adopted by acquire. Recovery is a separate proof step.
       if (await this.existing(location.name)) throw new Error('Runtime already exists; verified recovery required')
-      for (const path of [location.data, location.control]) await mkdir(path, { recursive: true, mode: 0o700 })
+      for (const path of [location.data, location.control, location.workspace]) await mkdir(path, { recursive: true, mode: 0o700 })
       if (stopping || signal.aborted) throw new Error('Runtime start cancelled')
       const profile = await realpath(this.options.profileDirectory(spec.domainId))
       const mount = (source: string, target: string, readOnly = false) => {
@@ -123,8 +123,8 @@ export class DockerRuntimeProvider implements RuntimeProvider {
         '--memory', `${this.options.memoryMb ?? 1_024}m`, '--memory-swap', `${this.options.memoryMb ?? 1_024}m`,
         '--cpus', String(this.options.cpus ?? 1), '--pids-limit', String(this.options.pids ?? 160),
         '--tmpfs', `/tmp:rw,nosuid,nodev,noexec,size=128m,uid=${this.options.uid},gid=${this.options.gid}`,
-        '--mount', mount(location.data, '/domain'), '--mount', mount(location.control, '/control'), '--mount', mount(profile, '/profile', true),
-        '--env', 'HOME=/domain', '--env', 'DSH_HOME=/domain/dsh-home', '--env', 'DSH_CONTROL_DIR=/control',
+        '--mount', mount(location.workspace, '/workspace'), '--mount', mount(location.data, '/domain'), '--mount', mount(location.control, '/control'), '--mount', mount(profile, '/profile', true),
+        '--env', 'DSH_WORKSPACE_ROOT=/workspace', '--env', 'HOME=/domain', '--env', 'DSH_HOME=/domain/dsh-home', '--env', 'DSH_CONTROL_DIR=/control',
         '--env', `DSH_DOMAIN_ID=${spec.domainId}`, '--env', `DSH_RUNTIME_GENERATION=${spec.generation}`,
         '--workdir', '/domain', this.options.image,
         'node', '--expose-internals', '/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js', '--profile', 'web', '--patch', '/profile/runtime.patch.json',

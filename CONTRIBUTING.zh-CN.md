@@ -29,3 +29,5 @@ Principal 内没有独立根/会话读取 ACL。原生权限继续按原生语�
 `pnpm release:check` 不执行发布。`pnpm probe:isolated` 用安装后的包验证真实原生 Host，环境要求见探针说明。DSH 版本/源码身份由 `scripts/dsh-target.mjs` 固定，本包版本由 package manifest 持有；更新上游需要经过审查的基线变更。
 
 发版时更新 README、CHANGELOG 和 `docs/releases/v<version>.md`，先合并经过审查的变更。手动 `release.yml` 只允许从经过审查、本地验证的 main 提交运行，不要求 GitHub CI：校验 registry 身份，发布 npm，验证安装产物与 dist-tag，最后创建同提交的 Git tag 和 GitHub Release。不得给另一提交打发布 tag，也不能把未发布的源码里程碑写成 npm 版本。
+
+LEGION 扩展使用显式 personal/workspace 域选择器，认证人员与工作区资源分离。工作区共享 Host 的会话权限由原生资源所有者管理；API 权限不能隔离 Host 中运行的恶意代码，模型代码必须在独立执行环境中运行。现有个人域记录、UUID、代次和清理隔离状态在迁移中保留。

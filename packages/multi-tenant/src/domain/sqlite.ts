@@ -2,15 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { DomainDesiredState, DomainOwner, DomainRecord, DomainRepository } from './repository.ts'
-
-function identity(owner: DomainOwner): void {
-  for (const value of [owner.tenantId, owner.principalId]) {
-    if (typeof value !== 'string' || !value.trim() || value !== value.trim()) {
-      throw new TypeError('Domain owner fields must be non-empty trimmed strings')
-    }
-  }
-}
+import { normalizeDomainScope, type DomainDesiredState, type DomainOwner, type DomainScope, type DomainRecord, type PersonalDomainRecord, type DomainRepository } from './repository.ts'
 
 /** Single-active coordinator, local storage only; directory must be platform-owned.
  * A separate SQLite exclusive transaction is the OS-released coordinator lock.
@@ -26,27 +18,51 @@ export class SQLiteDomainRepository implements DomainRepository {
     mkdirSync(root, { recursive: true, mode: 0o700 })
     const guard = new DatabaseSync(join(root, 'coordinator.sqlite'))
     let database: DatabaseSync | undefined
+    let migrating = false
     try {
       guard.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;')
       database = new DatabaseSync(join(root, 'domains.sqlite'))
+      const schema = database.prepare('PRAGMA user_version').get()
+      if (Number(schema?.user_version) > 2) throw new Error('Unsupported future domain schema')
+      database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; BEGIN IMMEDIATE;')
+      migrating = true
+      // A v1 personal directory is migrated atomically. Its UUID, generation and
+      // unresolved ownership are facts, never reassigned to a workspace scope.
       database.exec(`
-        PRAGMA journal_mode = WAL;
-        PRAGMA synchronous = FULL;
-        CREATE TABLE IF NOT EXISTS domains_v1 (
+        CREATE TABLE IF NOT EXISTS domains_v2 (
           id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL CHECK (kind IN ('personal','workspace')),
           tenant_id TEXT NOT NULL,
-          principal_id TEXT NOT NULL,
+          principal_id TEXT,
+          workspace_id TEXT,
           desired TEXT NOT NULL CHECK (desired IN ('enabled','suspended','revoked')),
           revision INTEGER NOT NULL CHECK (revision >= 0),
           generation INTEGER NOT NULL CHECK (generation >= 0),
           state TEXT NOT NULL CHECK (state IN ('stopped','starting','ready','stopping','failed')),
           unresolved INTEGER NOT NULL CHECK (unresolved IN (0,1)),
-          UNIQUE (tenant_id, principal_id)
+          CHECK ((kind = 'personal' AND principal_id IS NOT NULL AND workspace_id IS NULL)
+            OR (kind = 'workspace' AND workspace_id IS NOT NULL AND principal_id IS NULL))
         ) STRICT;
-        UPDATE domains_v1 SET state = 'failed' WHERE unresolved = 1;
+        CREATE UNIQUE INDEX IF NOT EXISTS domains_v2_personal ON domains_v2 (tenant_id, principal_id) WHERE kind = 'personal';
+        CREATE UNIQUE INDEX IF NOT EXISTS domains_v2_workspace ON domains_v2 (tenant_id, workspace_id) WHERE kind = 'workspace';
       `)
+      if (database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'domains_v1'").get()) {
+        // Plain INSERT deliberately rejects any pre-existing conflicting scope/UUID.
+        // Never replace a record, merge two domains, or guess migration completion.
+        database.exec(`INSERT INTO domains_v2
+          SELECT id, 'personal', tenant_id, principal_id, NULL, desired, revision, generation, state, unresolved FROM domains_v1;
+          DROP TABLE domains_v1;`)
+      }
+      // A read-only compatibility view makes an older v1 coordinator fail its
+      // startup UPDATE instead of silently creating a second writable directory.
+      database.exec(`CREATE VIEW IF NOT EXISTS domains_v1 AS
+        SELECT id, tenant_id, principal_id, desired, revision, generation, state, unresolved
+        FROM domains_v2 WHERE kind = 'personal';`)
+      database.exec("UPDATE domains_v2 SET state = 'failed' WHERE unresolved = 1; PRAGMA user_version = 2; COMMIT;")
+      migrating = false
     } catch (error) {
       const errors = [error]
+      if (migrating) { try { database?.exec('ROLLBACK') } catch (cleanup) { errors.push(cleanup) } }
       try { database?.close() } catch (cleanup) { errors.push(cleanup) }
       try { guard.close() } catch (cleanup) { errors.push(cleanup) }
       throw new AggregateError(errors, 'Cannot acquire the domain directory coordinator')
@@ -55,21 +71,34 @@ export class SQLiteDomainRepository implements DomainRepository {
     this.database = database
   }
 
-  resolve(owner: DomainOwner): DomainRecord {
-    identity(owner)
-    this.database.prepare(`INSERT INTO domains_v1 VALUES (?, ?, ?, 'enabled', 0, 0, 'stopped', 0)
-      ON CONFLICT (tenant_id, principal_id) DO NOTHING`).run(randomUUID(), owner.tenantId, owner.principalId)
-    const row = this.database.prepare('SELECT id FROM domains_v1 WHERE tenant_id = ? AND principal_id = ?')
-      .get(owner.tenantId, owner.principalId)!
+  resolve(owner: DomainOwner): PersonalDomainRecord
+  resolve(scope: DomainScope): DomainRecord
+  resolve(input: DomainOwner | DomainScope): DomainRecord
+  resolve(input: DomainOwner | DomainScope): DomainRecord {
+    const scope = normalizeDomainScope(input)
+    const personal = scope.kind === 'personal'
+    this.database.prepare(`INSERT INTO domains_v2 VALUES (?, ?, ?, ?, ?, 'enabled', 0, 0, 'stopped', 0)
+      ON CONFLICT DO NOTHING`).run(randomUUID(), scope.kind, scope.tenantId,
+      personal ? scope.principalId : null, personal ? null : scope.workspaceId)
+    const row = this.database.prepare(`SELECT id FROM domains_v2 WHERE kind = ? AND tenant_id = ?
+      AND ${personal ? 'principal_id' : 'workspace_id'} = ?`)
+      .get(scope.kind, scope.tenantId, personal ? scope.principalId : scope.workspaceId)
+    if (!row) throw new Error('Domain scope could not be resolved')
     return this.get(String(row.id))
   }
 
   get(id: string): DomainRecord {
-    const row = this.database.prepare('SELECT * FROM domains_v1 WHERE id = ?').get(id)
+    const row = this.database.prepare('SELECT * FROM domains_v2 WHERE id = ?').get(id)
     if (!row) throw new Error('Unknown domain')
+    const scope = normalizeDomainScope(row.kind === 'personal'
+      ? { kind: 'personal', tenantId: String(row.tenant_id), principalId: String(row.principal_id) }
+      : { kind: 'workspace', tenantId: String(row.tenant_id), workspaceId: String(row.workspace_id) })
+    const placement = scope.kind === 'personal'
+      ? { scope, owner: Object.freeze({ tenantId: scope.tenantId, principalId: scope.principalId }) }
+      : { scope }
     return Object.freeze({
       id: String(row.id),
-      owner: Object.freeze({ tenantId: String(row.tenant_id), principalId: String(row.principal_id) }),
+      ...placement,
       desired: row.desired as DomainRecord['desired'],
       state: row.state as DomainRecord['state'],
       revision: Number(row.revision),
@@ -79,7 +108,7 @@ export class SQLiteDomainRepository implements DomainRepository {
   }
 
   begin(id: string): DomainRecord {
-    const result = this.database.prepare(`UPDATE domains_v1
+    const result = this.database.prepare(`UPDATE domains_v2
       SET generation = generation + 1, state = 'starting', unresolved = 1
       WHERE id = ? AND desired = 'enabled' AND unresolved = 0
         AND state IN ('stopped','failed') AND generation < 9007199254740991`).run(id)
@@ -88,18 +117,18 @@ export class SQLiteDomainRepository implements DomainRepository {
   }
 
   ready(id: string, generation: number): void {
-    const result = this.database.prepare(`UPDATE domains_v1 SET state = 'ready'
+    const result = this.database.prepare(`UPDATE domains_v2 SET state = 'ready'
       WHERE id = ? AND generation = ? AND state = 'starting' AND desired = 'enabled'`).run(id, generation)
     if (result.changes !== 1) throw new Error('Stale domain readiness')
   }
 
   stopping(id: string, generation: number): void {
-    this.database.prepare(`UPDATE domains_v1 SET state = 'stopping'
+    this.database.prepare(`UPDATE domains_v2 SET state = 'stopping'
       WHERE id = ? AND generation = ? AND unresolved = 1`).run(id, generation)
   }
 
   finish(id: string, generation: number, released: boolean, failed: boolean): void {
-    const result = this.database.prepare(`UPDATE domains_v1 SET state = ?, unresolved = ?
+    const result = this.database.prepare(`UPDATE domains_v2 SET state = ?, unresolved = ?
       WHERE id = ? AND generation = ?`).run(failed || !released ? 'failed' : 'stopped', released ? 0 : 1, id, generation)
     if (result.changes !== 1) throw new Error('Stale domain disposal')
   }
@@ -108,7 +137,7 @@ export class SQLiteDomainRepository implements DomainRepository {
     const current = this.get(id)
     if (current.desired === desired) return current
     if (current.desired === 'revoked') throw new Error('Revoked domains cannot be re-enabled')
-    const result = this.database.prepare(`UPDATE domains_v1 SET desired = ?, revision = revision + 1
+    const result = this.database.prepare(`UPDATE domains_v2 SET desired = ?, revision = revision + 1
       WHERE id = ? AND revision < 9007199254740991`).run(desired, id)
     if (result.changes !== 1) throw new Error('Cannot update domain policy')
     return this.get(id)
