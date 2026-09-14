@@ -40,5 +40,7 @@ jobs:
         run: pnpm --filter dsh-multi-tenant build
       - name: Focused authenticated ingress regressions
         run: pnpm --filter dsh-multi-tenant exec vitest run --config vitest.config.ts tests/ingress/server.test.ts --maxWorkers=1
+      - name: Focused Linux private control regressions
+        run: pnpm --filter dsh-multi-tenant exec vitest run --config vitest.config.ts tests/runtime/private-control.test.ts --maxWorkers=1
       - name: Independently installed artifact and declaration smoke
         run: node scripts/artifact-consumer-smoke.mjs --local
