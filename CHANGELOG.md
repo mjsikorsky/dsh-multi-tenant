@@ -1,5 +1,10 @@
 # Changelog / 更新记录
 
+## Unreleased
+
+- Add `SystemdRuntimeProvider`: runs each domain as a host-defined systemd template unit with a platform-owned generation record, private Unix transport and verified recovery.
+- 新增 `SystemdRuntimeProvider`：每个域作为宿主机定义的 systemd 模板 unit 运行，带平台持有的 generation 记录、私有 Unix 传输和可验证恢复。
+
 ## 0.8.0
 
 - Add one-command local CLI, persistent Alice/Bob workspaces and explicit keyless demo.

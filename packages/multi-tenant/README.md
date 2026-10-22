@@ -47,7 +47,7 @@ A typical visit is: **sign in → resolve the user's domain → start or reuse i
 - A domain directory keyed by `(tenantId, principalId)`, keeping identity and desired state across platform restarts.
 - Deduplicated Host startup, generation checks, suspension/revocation, bounded shutdown and verified recovery after a coordinator crash.
 - Authenticated HTTP/WebSocket ingress for native Web, preserving native messages, tools and file transport. Native login cookies remain private to the platform.
-- A constrained Linux Docker reference provider and a trusted-development local process provider, plus public interfaces for deployment-specific runtimes.
+- A constrained Linux Docker reference provider, a Linux systemd provider that runs each domain as a host-defined template unit, and a trusted-development local process provider, plus public interfaces for deployment-specific runtimes.
 - Native preset/MCP/subagent composition, exercised through installed-package integration tests rather than a custom Agent facade.
 
 ## Decide whether this version suits your deployment
@@ -99,6 +99,8 @@ To test an unreleased checkout, build and install its tarball with `pnpm --filte
 The coordinator requires Node 22.19 or Node 24+. The public SDK reference providers target Linux; the CLI uses a separate internal provider. `DockerRuntimeProvider` requires a local Docker engine and a prebuilt immutable image containing **DSH 0.1.5-rc.2**, pinned source `fb2c4b9e698e30edb738bca4cf0618587db7d203`. Run the coordinator as a non-root user with Docker access; the reference runtime UID/GID must match that user so both sides can access the private control files. It does not download DSH into the platform process. TypeScript consumers should install `@types/node` and include `node` in compiler `types`.
 
 Docker defaults to `--network bridge`; set `network: 'none'` for `--network none`. No ports are published and the native server listens on container loopback. Bridge allows access to reachable host/LAN services and other containers on the same bridge; it is not a network tenant boundary. Apply deployment firewall policy when network separation is required. External API credentials remain necessary. The local process provider is for trusted development, not hostile workloads.
+
+`SystemdRuntimeProvider` starts and stops instances of a host-defined template unit (`dsh-domain@<domainId>.service` by default) through `systemctl`; the unit, not the provider, applies the sandbox, so the isolation policy is reviewable host configuration. The provider and unit share one platform `directory`: `control/<id>`, `data/<id>`, `workspaces/<id>` and a read-only `profiles/<id>` are bound to `/control`, `/domain`, `/workspace` and `/profile`, and `spec/<id>.env` carries the generation as the unit's `EnvironmentFile` without being mounted, so a workload cannot alter the ownership record. Provision `profiles/<id>/runtime.patch.json` before starting a domain. The coordinator needs permission to `start`, `stop` and `reset-failed` those units only (for example a polkit rule), and must share the unit's UID because the private socket is mode 0600. Give each unit its own network namespace: every runtime listens on loopback port 3081.
 
 ## Embed in an authenticated server
 
@@ -181,7 +183,7 @@ Native user settings, user-installed domain plugins and domain credentials are i
 - `runtime.setDesired(id, 'revoked')` is terminal and persists across restart. It revokes domain access, not retained data or credentials at an external service. Data retention/deletion is an explicit platform operation after verified stop.
 - For domain capability/credential rotation: suspend, await confirmed cleanup, replace trusted assets or revoke external credentials, then enable. External revocation failures must leave the domain suspended. Native credential editing inside the domain remains native behavior; hot MCP credential rotation is not promised.
 - A failed stop retains ownership and prevents a new writer. Repair the cause and retry; do not remove the directory lock or clear `unresolved` manually.
-- After a coordinator crash, use `runtime.recover(id)` for unresolved records before reopening. The Docker provider checks exact domain/generation/owner labels and removes the previous container before storage reuse. It refuses foreign ownership. The local process provider cannot automatically prove recovery.
+- After a coordinator crash, use `runtime.recover(id)` for unresolved records before reopening. The Docker provider checks exact domain/generation/owner labels and removes the previous container before storage reuse. It refuses foreign ownership. The systemd provider checks the unit's platform-written generation record, stops the unit and removes its control directory; it also refuses foreign ownership. The local process provider cannot automatically prove recovery.
 
 One coordinator owns each local SQLite directory. This is not a multi-machine scheduler or storage fence. Domains stay running until explicitly stopped; automatic idle eviction is not provided because a disconnected browser may have active background work. Choose quotas and scheduling in the embedding platform from workload measurements.
 

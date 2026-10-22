@@ -47,7 +47,7 @@ npx -y dsh-multi-tenant@0.8.0 start
 - 按 `(tenantId, principalId)` 持久化域归属和期望状态，平台重启后仍能核对身份与撤销状态。
 - 去重启动、generation 校验、暂停/撤销、有时限的停止，以及协调器崩溃后的可验证恢复。
 - 面向原生 Web 的认证 HTTP/WebSocket 入口，保留消息、工具和文件传输，DSH 内层登录凭据留在平台。
-- 受限 Linux Docker 参考 provider、可信开发用本地进程 provider，以及部署方实现其他运行环境的公开接口。
+- 受限 Linux Docker 参考 provider、将每个域作为宿主机模板 unit 运行的 Linux systemd provider、可信开发用本地进程 provider，以及部署方实现其他运行环境的公开接口。
 - 使用原生 preset/MCP/子代理组合，通过安装后的真实运行时验证，替换旧逐 Agent facade。
 
 ## 使用前需要了解的边界
@@ -99,6 +99,8 @@ npm install dsh-multi-tenant@0.8.0
 平台使用 Node 22.19 或 Node 24+；内置 provider 面向 Linux。Docker provider 要求本机 Docker engine 及预构建的不可变镜像。镜像内固定 **DSH 0.1.5-rc.2**，源码身份 `fb2c4b9e698e30edb738bca4cf0618587db7d203`。协调器使用有 Docker 权限的非 root 用户运行；参考 runtime 的 UID/GID 必须与协调器相同，才能访问双方私有控制文件。平台进程不安装 DSH 运行时。TypeScript 消费者安装 `@types/node`，并在编译选项 `types` 中包含 `node`。
 
 Docker 默认使用 `--network bridge`；设置 `network: 'none'` 即使用 `--network none`。不发布端口，原生服务只监听容器内 loopback。bridge 可访问网络可达的宿主机、内网服务及同桥容器，不提供网络级租户隔离；需要限制时由部署方配置防火墙。外部模型和 MCP 仍需相应凭据。本地进程 provider 仅用于可信开发，不是恶意工作负载的隔离边界。
+
+`SystemdRuntimeProvider` 通过 `systemctl` 启停宿主机定义的模板 unit 实例（默认 `dsh-domain@<domainId>.service`）；沙箱由 unit 而非 provider 施加，隔离策略因此是可审查的宿主机配置。provider 与 unit 共用一个平台 `directory`：`control/<id>`、`data/<id>`、`workspaces/<id>` 及只读 `profiles/<id>` 分别绑定到 `/control`、`/domain`、`/workspace`、`/profile`；`spec/<id>.env` 以 unit 的 `EnvironmentFile` 携带 generation 且不挂载进运行时，工作负载无法篡改所有权记录。启动域前须准备 `profiles/<id>/runtime.patch.json`。协调器只需获得对这些 unit 执行 `start`、`stop`、`reset-failed` 的权限（例如 polkit 规则），且须与 unit 使用相同 UID，因为私有 socket 权限为 0600。每个 unit 须有独立网络命名空间：所有运行时都监听 loopback 端口 3081。
 
 ## 嵌入认证服务
 
@@ -185,7 +187,7 @@ Docker provider 启动 `/opt/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js --prof
 - `runtime.setDesired(id, 'revoked')` 是不可逆的域访问撤销，重启后仍拒绝。不会自动删除留存数据，也不会撤销外部服务凭据；数据清理须在确认停止后由平台显式执行。
 - 域级能力或凭据轮换：暂停域，等待清理完成，替换可信资产或撤销外部凭据，再启用。外部撤销失败则保持暂停。域内原生 credentials 编辑仍遵循原生行为，不承诺 MCP 热轮换。
 - 停止失败保留所有权并阻止新 writer；修复后重试，不能手工清除锁或 `unresolved`。
-- 协调器崩溃后，对残留记录执行 `runtime.recover(id)`。Docker provider 核对 domain/generation/owner 标签，移除精确旧容器后才允许复用存储；拒绝接管外来所有权。本地进程 provider 不提供自动恢复证明。
+- 协调器崩溃后，对残留记录执行 `runtime.recover(id)`。Docker provider 核对 domain/generation/owner 标签，移除精确旧容器后才允许复用存储；拒绝接管外来所有权。systemd provider 核对平台写入的 generation 记录，停止 unit 并删除其控制目录，同样拒绝外来所有权。本地进程 provider 不提供自动恢复证明。
 
 每个本地 SQLite 目录只有一个协调器，不提供跨机调度或存储 fencing。浏览器断线可能仍有后台任务，因此没有自动空闲回收；域持续运行直到显式停止。配额和调度由嵌入平台基于实际工作负载决定。
 
