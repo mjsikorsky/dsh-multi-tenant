@@ -62,6 +62,7 @@ Repository paths:
 - `src/domain/` under that package: durable owner/desired-state records; `src/runtime/coordinator.ts`: admission, generations and lifecycle.
 - `src/ingress/`: authenticated HTTP/WS routing and invalidation.
 - `src/runtime/providers/docker.ts`: Linux SDK provider with private host paths/Unix sockets and configured UID/GID.
+- `src/runtime/providers/systemd.ts`: Linux SDK provider that starts a host-defined template unit per domain; the unit owns the sandbox, `spec/<id>.env` owns the generation record.
 - `src/runtime/providers/desktop-docker.ts`: internal CLI provider with daemon-owned volumes and authenticated TCP transport. This does not make the Linux SDK provider Desktop-compatible.
 - `src/cli/`: local launcher and demo portal; native chat UI remains upstream DSH.
 - `src/native/`, `runtime/`, `experience/`: native readiness/relay, pinned image build, deterministic demo model/MCP/preset.
